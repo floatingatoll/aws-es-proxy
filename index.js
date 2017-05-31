@@ -2,63 +2,81 @@ const AWS = require('aws-sdk');
 const co = require('co');
 const url = require('url');
 const http = require('http');
-const options = require('optimist')
-  .argv;
+const options = require('optimist').argv;
 
 const context = {};
 process.env.AWS_PROFILE = process.env.AWS_PROFILE || options.profile || 'default';
 var creds = {};
 
+var updateCredentials = function () {
+  return new Promise(function (resolve, reject) {
+    AWS.config.getCredentials(function (err) {
+      if(err) {
+        console.log('Error while getting Credentials.');
+        console.log(err);
+        reject(err)
+      }
+      resolve()
+    })
+  });
+}
+
 var execute = function(endpoint, region, path, headers, method, body) {
   return new Promise((resolve, reject) => {
-    var req = new AWS.HttpRequest(endpoint);
+    co(function* () {
 
-    if(options.quiet !== true) {
-      console.log('>>>', method, path);
-    }
-
-    req.method = method || 'GET';
-    req.path = path;
-    req.region = region;
-    req.body = body;
-
-    req.headers['presigned-expires'] = false;
-    req.headers.Host = endpoint.host;
-
-    var signer = new AWS.Signers.V4(req, 'es');
-    signer.addAuthorization(creds, new Date());
-
-    // Now we have signed the "headers", we add extra headers passing
-    // from the browser.  We must strip any connection control, transport encoding
-    // incorrect Origin headers, and make sure we don't change the Host header from
-    // the one used for signing
-    var keys = Object.keys(headers)
-    for (var i = 0, len = keys.length; i < len; i++) {
-      if (keys[i] != "host" && 
-        keys[i] != "accept-encoding" &&
-        keys[i] != "connection" &&
-        keys[i] != "origin") {
-        req.headers[keys[i]] = headers[keys[i]];
+      var req = new AWS.HttpRequest(endpoint);
+  
+      if(options.quiet !== true) {
+        console.log('>>>', method, path);
       }
-    }
-
-    var client = new AWS.NodeHttpClient();
-    client.handleRequest(req, null, (httpResp) => {
-      var body = '';
-      httpResp.on('data', (chunk) => {
-        body += chunk;
-      });
-      httpResp.on('end', (chunk) => {
-        resolve({
-          statusCode: httpResp.statusCode,
-          headers: httpResp.headers,
-          body: body
+  
+      req.method = method || 'GET';
+      req.path = path;
+      req.region = region;
+      req.body = body;
+  
+      // Some credentials may require refresh, updateCredentials handles this
+      yield updateCredentials()
+      req.headers['presigned-expires'] = false;
+      req.headers.Host = endpoint.host;
+  
+      var signer = new AWS.Signers.V4(req, 'es');
+      signer.addAuthorization(AWS.config.credentials, new Date());
+  
+      // Now we have signed the "headers", we add extra headers passing
+      // from the browser.  We must strip any connection control, transport encoding
+      // incorrect Origin headers, and make sure we don't change the Host header from
+      // the one used for signing
+      var keys = Object.keys(headers)
+      for (var i = 0, len = keys.length; i < len; i++) {
+        if (keys[i] != "host" && 
+          keys[i] != "accept-encoding" &&
+          keys[i] != "connection" &&
+          keys[i] != "origin") {
+          req.headers[keys[i]] = headers[keys[i]];
+        }
+      }
+  
+      var client = new AWS.NodeHttpClient();
+      client.handleRequest(req, null, (httpResp) => {
+        var body = '';
+        httpResp.on('data', (chunk) => {
+          body += chunk;
         });
+        httpResp.on('end', (chunk) => {
+          resolve({
+            statusCode: httpResp.statusCode,
+            headers: httpResp.headers,
+            body: body
+          });
+        });
+      }, (err) => {
+        console.log('Error: ' + err);
+        reject(err);
       });
-    }, (err) => {
-      console.log('Error: ' + err);
-      reject(err);
-    });
+    })
+    .catch(err => reject(err))
   });
 };
 
@@ -126,7 +144,6 @@ var startServer = function() {
   });
 };
 
-
 var main = function() {
   co(function*(){
       var maybeUrl = options._[0];
@@ -149,14 +166,9 @@ var main = function() {
         context.endpoint = new AWS.Endpoint(uri.host);
       }
 
-      var chain = new AWS.CredentialProviderChain();
-      yield chain.resolvePromise()
-        .then(function (credentials) {
-          creds = credentials;
-        })
-        .catch(function (err) {
-          console.log('Error while getting AWS Credentials.')
-          console.log(err);
+      yield updateCredentials()
+        .catch(err => {
+          // if we cannot find credentials, exit
           process.exit(1);
         });
 
