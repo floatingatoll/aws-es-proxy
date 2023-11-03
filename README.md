@@ -47,7 +47,7 @@ docker build -t aws-es-proxy .
 Run and specify credentials via ENV variables.
 
 ```
-docker run -it --rm -p 9210:9200 \
+docker run --init -it --rm -p 9210:9200 \
   -e AWS_ACCESS_KEY_ID=... \
   -e AWS_SECRET_ACCESS_KEY=... \
   aws-es-proxy <elasticsearch_url>
@@ -56,7 +56,7 @@ docker run -it --rm -p 9210:9200 \
 Utilise configuration and profiles from the host.
 
 ```
-docker run -it -v $HOME/.aws:/root/.aws --rm -p 9210:9200 \
+docker run --init -it -v $HOME/.aws:/root/.aws --rm -p 9210:9200 \
   aws-es-proxy --profile <profile_name> <elasticsearch_url>
 ```
 
